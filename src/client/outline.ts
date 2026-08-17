@@ -7,7 +7,7 @@
 import type { RailTurn } from './turns.js'
 
 /** 与 host 侧 API_PREFIX 一一对应。 */
-const API = '/@dsh-external/dsh-conversation-rail/api'
+const API = '/dsh-conversation-rail/api'
 
 interface OutlineResponse {
   ok?: boolean

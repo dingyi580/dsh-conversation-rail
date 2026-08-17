@@ -1,9 +1,9 @@
 /**
- * @dsh-external/dsh-conversation-rail — host 入口。
+ * dsh-conversation-rail — host 入口。
  *
  * 只做一件事：开一个只读的 HTTP 口子，把整份会话日志折成轮次目录给前端。
  *
- *   GET /@dsh-external/dsh-conversation-rail/api/outline?sessionId=<id>
+ *   GET /dsh-conversation-rail/api/outline?sessionId=<id>
  *     → { ok: true, turns: [{ seq, question, answer, weight }, …] }
  *
  * 前端的对话是分页加载的，快照里只有最近一段；轨道要画全会话就必须有一份
@@ -14,7 +14,7 @@ import { buildOutline } from './outline.js'
 import type { SessionQueryFace } from './outline.js'
 
 /** 路由前缀，与 client 侧的 API 常量一一对应。 */
-export const API_PREFIX = '/@dsh-external/dsh-conversation-rail/api'
+export const API_PREFIX = '/dsh-conversation-rail/api'
 
 /** 大纲缓存有效期：折叠掉切会话来回跳产生的重复读取。 */
 const CACHE_TTL_MS = 5_000
@@ -34,7 +34,7 @@ type HostContext = {
   logger?: { warn?(...args: unknown[]): void }
 }
 
-export const name = '@dsh-external/dsh-conversation-rail'
+export const name = 'dsh-conversation-rail'
 export const inject = ['webServer', 'sessionQuery']
 
 interface CacheEntry {

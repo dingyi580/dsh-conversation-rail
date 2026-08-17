@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-conversation-rail — client 入口：会话小地图。
+ * dsh-conversation-rail — client 入口：会话小地图。
  *
  * 占一个座位：`conversation.session.header.utilities`。选它不是因为要在
  * 标题栏画东西——这个座位是 session 作用域，组件能拿到框架给的
@@ -46,7 +46,7 @@ type SessionKit = {
 
 export const inject = ['slots', 'sessions']
 
-const PLUGIN = '@dsh-external/dsh-conversation-rail'
+const PLUGIN = 'dsh-conversation-rail'
 
 /**
  * 补历史的翻页上限。一次 loadOlder 拉一页，到不了就停——宁可跳不过去，

@@ -1,6 +1,6 @@
 import type { UserConfig } from 'tsdown'
 
-const PLUGIN_ID = '@dsh-external/dsh-conversation-rail'
+const PLUGIN_ID = 'dsh-conversation-rail'
 
 /** 宿主已经在页面里提供的模块——打进来会拿到第二份 React，钩子直接崩。 */
 const CLIENT_EXTERNALS = [
