@@ -1,0 +1,8 @@
+# dsh-conversation-rail bundle 层：把会话小地图插进 profile 的插件表。
+#
+# 纯 client 插件——host 侧 apply 是空的，所有行为都在 dsh.client 声明的
+# 浏览器入口里（对话左缘的导航轨 + 悬停预览卡）。
+- insert:
+    - id: dsh-conversation-rail
+      name: '@dsh-external/dsh-conversation-rail'
+      config: {}
