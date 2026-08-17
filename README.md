@@ -1,88 +1,121 @@
-# dsh-conversation-rail · 会话小地图
+# dsh-conversation-rail · session minimap
 
-长会话的快速定位器。对话滚动区左缘一条竖轨，**一根杠 = 一轮对话**；
-悬停弹出预览卡，点击跳到那一轮。
+English | [中文](README.zh.md)
+
+A locator for long conversations in DSH Web. A vertical rail sits along the left
+edge of the conversation, **one bar per turn**; hover a bar for a preview card,
+click it to jump to that turn.
 
 ```
   ▏─────                 ┌──────────────────────────────┐
-  ▏───────────           │ 做任何补丁啊，这…            │  ← 提问（深色，一行，省略号）
-  ▏━━━━━━━━━━━━━━  ◀━━━━━┤ CRLF 已排除。下…             │
-  ▏──────                │ 大小、只有合法重…            │  ← 回答（淡色，最多四行）
+  ▏───────────           │ Can you patch this without…  │  ← question (one line, dark)
+  ▏━━━━━━━━━━━━━━  ◀━━━━━┤ CRLF is already ruled out…   │
+  ▏──────                │ only the legal re-encodes…   │  ← answer (up to four lines, dimmed)
   ▏────────              └──────────────────────────────┘
 ```
 
-- **杠长** = 这一轮的文字体量（开方压缩，10–34px）。
-- **加粗高亮的那根** = 滚动区顶部当前对着的那一轮。
-- **预览卡**只放人话：用户提问 + 助手的纯文字回答。围栏代码块、工具调用、
-  命令行、思考链、上下文注入一律不进卡片——命令和 JSON 扫不出信息。
+- **Bar length** = how much text that turn holds (square-root compressed, 10–34px).
+- **The bold bar** = the turn currently at the top of the scroll area.
+- **The preview card** carries prose only: your question plus the assistant's plain
+  text. Fenced code blocks, tool calls, shell commands, reasoning traces and
+  injected context never reach the card — you cannot skim JSON.
 
-## 画的是整个会话，不是当前加载窗口
+## It draws the whole session, not the loaded window
 
-对话历史是分页加载的，前端快照里通常只有最近一小段——`8 轮` 的会话可能只有
-1 轮在窗口里。轨道不受这个限制：
+Conversation history is paginated: the front-end snapshot usually holds only the
+most recent stretch, so an `8-turn` session may have 1 turn in the window. The
+rail is not bound by that:
 
-- **骨架**来自 host 的大纲接口（`GET …/api/outline?sessionId=`）。host 用
-  `ctx.sessionQuery.readSession()` 读整份日志，折成每轮约百来字节的目录再回给前端，
-  不把历史推过网络。
-- **实时快照**覆盖其中已加载的那段——它带着可跳转的 DOM 锚点，正在流式输出的
-  那一轮也只有它是最新的。两边按 `user/message` 的事件 **seq** 对齐，实时的压过大纲的。
-- **点还没加载的那根杠**：反复调 `session.loadOlder()` 翻历史，直到那一轮进入窗口再跳过去。
-  翻页期间那根杠会脉动，上限 40 页——宁可跳不过去，也不会因为点一下就无限翻整份日志。
+- **The skeleton** comes from the host's outline endpoint
+  (`GET /dsh-conversation-rail/api/outline?sessionId=`). The host reads the full
+  log with `ctx.sessionQuery.readSession()`, folds it into a table of contents of
+  roughly a hundred bytes per turn, and returns that — the history itself never
+  crosses the network.
+- **The live snapshot** overrides the part that is loaded: it carries jumpable DOM
+  anchors, and for a turn that is still streaming it is the only current source.
+  The two are aligned by the `user/message` event **seq**, live winning over outline.
+- **Clicking a bar that isn't loaded yet** calls `session.loadOlder()` repeatedly
+  until that turn enters the window, then jumps. The bar pulses while paging, with
+  a ceiling of 40 pages — better to not reach a turn than to page through an entire
+  log because of one click.
 
-大纲用 `readSession` 而不是更轻的 `filterEvents`，是因为后者不回 `source`。而
-`user/message` 这个事件类型同时装着**真人提问**和 `agent.inject()` 注入的上下文
-（文件变更通知、AGENTS.md、skill 正文……），官方文档写明三者都原样投影 content、
-**靠 `source` 区分**。少了这个字段就会把注入的上下文也画成一根杠。
+The outline uses `readSession` rather than the lighter `filterEvents` because the
+latter does not return `source`. The `user/message` event type carries both **real
+questions** and context injected by `agent.inject()` (file-change notices,
+AGENTS.md, skill bodies…); the official docs state all three project `content`
+verbatim and are told apart **by `source`**. Without that field, injected context
+would be drawn as turns.
 
-## 它是怎么接上去的
+## How it attaches
 
-占一个座位：`conversation.session.header.utilities`。选它不是为了在标题栏画
-东西——这是 session 作用域的槽，组件能拿到框架的 `useSession` 快照钩子和
-`sessionId`，生命周期跟着会话走。组件在标题栏里渲染 `null`，真正的轨道是
-body 上的 fixed 浮层，按 `[data-conversation-scroll]` 的实测矩形对齐，
-不参与宿主布局，换皮肤 / 折叠侧栏 / 改栅格都不会把它挤歪。
+It takes one seat: `conversation.session.header.utilities`. Not to draw anything in
+the header — that slot is session-scoped, so the component receives the framework's
+`useSession` snapshot hook and `sessionId`, and its lifetime follows the session.
+The component renders `null` in the header; the actual rail is a fixed overlay on
+`body`, aligned to the measured rectangle of `[data-conversation-scroll]`. It stays
+out of the host layout, so switching skins, collapsing the sidebar or changing the
+grid cannot squeeze it.
 
-数据只来自 `ConversationSnapshot.chat`：按 `order` 遍历，遇到 `user` 开一轮，
-其后的 `assistant-step` 文字块归到这一轮。跳转用宿主自己那套锚点
-（`[data-chat-anchor-key]`），和它内部的滚动定位走同一条路。
+Turn data comes from `ConversationSnapshot.chat`: walk `order`, open a turn on a
+`user` node, attribute the following `assistant-step` text blocks to it. Jumping
+uses the host's own anchors (`[data-chat-anchor-key]`), the same path its internal
+scroll positioning takes.
 
-## 已知边界
+## Known boundaries
 
-- **大纲一个会话取一次。** 新产生的轮次从实时快照进来，不重取；只有切走再切回
-  才会重新拉（host 侧 5 秒缓存兜住来回跳）。
-- **跳到很早的轮次 = 把它之前的历史全加载进来。** 这是分页本身的语义：要显示第 1 轮，
-  就得把它到窗口之间的都翻出来。跳最近的几轮则几乎不用翻页。
-- **大纲接口失败时自动降级**，退回只画已加载的那一段，不会让轨道消失。
-- **预览按纯文本渲染**，不解析 markdown：行首的 `#`、`-`、`1.` 和强调符会被剥掉，
-  围栏代码整块删除。
+- **The outline is fetched once per session.** New turns arrive through the live
+  snapshot and do not trigger a refetch; only leaving and returning to the session
+  refetches (a 5-second host-side cache absorbs the back-and-forth).
+- **Jumping to a very early turn loads every page between it and the window.**
+  That is what pagination means: to show turn 1, everything from there up to the
+  loaded window has to come in. Jumping to recent turns pages almost not at all.
+- **If the outline endpoint fails, the rail degrades** to drawing only the loaded
+  stretch rather than disappearing.
+- **Previews are rendered as plain text**, not markdown: leading `#`, `-`, `1.` and
+  emphasis marks are stripped, fenced code is removed entirely.
 
-## 安装
+## Install
 
-装配信息在 profile 里，不在本仓库。把插件放到 `~/.dsh/plugins/dsh-conversation-rail`
-之后，往 `~/.dsh/profiles/web/package.json` 加两处：
+```sh
+dsh plugin --profile web add github:dingyi580/dsh-conversation-rail
+```
+
+Then restart `dsh web` (a newly assembled plugin needs a restart; later code changes
+can be hot-reloaded with `dev_reload_package`).
+
+<details>
+<summary>Installing from a local checkout</summary>
+
+Put the plugin at `~/.dsh/plugins/dsh-conversation-rail`, then add two entries to
+`~/.dsh/profiles/web/package.json`:
 
 ```json
 {
-  "dsh": { "profile": { "bundles": ["…", "@dsh-external/dsh-conversation-rail"] } },
+  "dsh": { "profile": { "bundles": ["…", "dsh-conversation-rail"] } },
   "dependencies": {
-    "@dsh-external/dsh-conversation-rail": "link:/Users/<你>/.dsh/plugins/dsh-conversation-rail"
+    "dsh-conversation-rail": "link:/Users/<you>/.dsh/plugins/dsh-conversation-rail"
   }
 }
 ```
 
-再把它链进 profile 的 node_modules，然后重启 web 服务（新插件进装配表要重启，
-改代码可以用 `dev_reload_package` 热重载）：
+and link it into the profile's `node_modules`:
 
-```bash
-ln -sfn ../../../../plugins/dsh-conversation-rail ~/.dsh/profiles/web/node_modules/@dsh-external/dsh-conversation-rail
+```sh
+ln -sfn ../../../plugins/dsh-conversation-rail ~/.dsh/profiles/web/node_modules/dsh-conversation-rail
 ```
 
-## 构建
+</details>
 
-```bash
-node_modules/.bin/tsc -p tsconfig.json   # 类型校验
-node_modules/.bin/tsdown                  # src/client → lib/client.js
+## Build
+
+```sh
+npm run build       # tsc for the host entry + tsdown for src/client → lib/client.js
+npm run typecheck   # type check only
 ```
 
-`lib/index.js` 是手写的空 host 入口（这个插件没有 host 行为），不参与构建。
-装配走 `cordis.patch.yml` + profile 的 `dsh.profile.bundles`。
+`lib/` is committed so the plugin installs from GitHub without a build step.
+Assembly goes through `cordis.patch.yml` plus the profile's `dsh.profile.bundles`.
+
+## License
+
+BSD-3-Clause
