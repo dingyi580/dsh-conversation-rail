@@ -15,6 +15,35 @@ interface OutlineResponse {
 }
 
 /**
+ * 取不到就重试的间隔（毫秒）。
+ *
+ * 一个会话只取一次大纲，所以这一次失败的代价是整条轨道降级成「只画已加载
+ * 的那段」，而且要等用户切走再切回才有机会恢复。host 重启、插件热重载、
+ * 页面刚起来后端还没就绪——都是几百毫秒就过去的事，值得多等这几下。
+ */
+const RETRY_DELAYS = [400, 1200, 3000]
+
+/**
+ * 可取消的等待。
+ * @param ms - 等待毫秒数。
+ * @param signal - 会话切换时取消。
+ * @returns 等到了返回 true，被取消返回 false。
+ */
+function delay(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(true)
+    }, ms)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      resolve(false)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
  * 拉取一个会话的全量轮次目录。
  *
  * @param sessionId - 目标会话。
@@ -22,11 +51,32 @@ interface OutlineResponse {
  * @returns 轮次目录；接口不可用或出错时返回空数组，轨道退回到只画已加载的那段。
  */
 export async function fetchOutline(sessionId: string, signal: AbortSignal): Promise<RailTurn[]> {
+  const query = API + '/outline?sessionId=' + encodeURIComponent(sessionId)
+
+  for (let attempt = 0; ; attempt++) {
+    if (signal.aborted) return []
+    const turns = await attemptOutline(query, signal)
+    if (turns !== null) return turns
+    if (attempt >= RETRY_DELAYS.length) return []
+    if (!(await delay(RETRY_DELAYS[attempt], signal))) return []
+  }
+}
+
+/**
+ * 取一次大纲。
+ *
+ * @param query - 完整的请求地址。
+ * @param signal - 会话切换时取消。
+ * @returns 成功返回轮次（可能是空数组：新会话本来就没有轮次）；
+ *          失败返回 `null`，交给调用方决定要不要再来一次。
+ */
+async function attemptOutline(query: string, signal: AbortSignal): Promise<RailTurn[] | null> {
   try {
-    const res = await fetch(API + '/outline?sessionId=' + encodeURIComponent(sessionId), { signal })
-    if (!res.ok) return []
+    const res = await fetch(query, { signal })
+    if (!res.ok) return null
     const body = (await res.json()) as OutlineResponse
-    if (body.ok !== true || !Array.isArray(body.turns)) return []
+    // host 读日志失败时回的是 200 + ok:false，同样算这一次没取到。
+    if (body.ok !== true || !Array.isArray(body.turns)) return null
     const turns: RailTurn[] = []
     for (const raw of body.turns) {
       if (typeof raw?.seq !== 'number') continue
@@ -41,7 +91,7 @@ export async function fetchOutline(sessionId: string, signal: AbortSignal): Prom
     }
     return turns
   } catch {
-    // 取消或网络失败都不该让轨道消失，退回实时快照那一段。
-    return []
+    // 取消和网络失败都走这里；取消由上层的 signal.aborted 判掉。
+    return null
   }
 }
