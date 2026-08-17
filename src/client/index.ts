@@ -49,6 +49,15 @@ export const inject = ['slots', 'sessions']
 const PLUGIN = 'dsh-conversation-rail'
 
 /**
+ * 座位标签。插件对外发布之后装它的人不一定看得懂中文，按浏览器语言给一份英文。
+ * @returns 中文界面下的中文名，其余一律英文。
+ */
+function label(): string {
+  const lang = typeof navigator === 'undefined' ? '' : (navigator.language ?? '')
+  return lang.toLowerCase().startsWith('zh') ? '会话小地图' : 'Session minimap'
+}
+
+/**
  * 补历史的翻页上限。一次 loadOlder 拉一页，到不了就停——宁可跳不过去，
  * 也不能在用户点一下之后无限翻整份日志。
  */
@@ -140,7 +149,7 @@ export function apply(ctx: ClientContext): void {
         name: 'conversation.session.header.utilities',
         id: PLUGIN + '-rail',
         order: 90,
-        label: () => '会话小地图',
+        label,
       },
       ConversationRail,
     ),
