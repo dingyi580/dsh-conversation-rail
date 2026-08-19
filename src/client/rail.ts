@@ -179,9 +179,24 @@ function ensureStyle(doc: Document): void {
 }
 
 /**
+ * 把杠长基准量化成 1.25 的整数次幂。
+ *
+ * 基准直接用当前最大体量的话，流式输出那一轮每来一个 chunk 就把基准顶高一点，
+ * 于是**每一根**杠的宽度都要重算——`.dsh-rail-bar` 上还挂着 `transition: width`，
+ * 整条轨道就一直在微微抖。量化之后，基准只在体量涨过一档时才跳一次。
+ *
+ * @param maxWeight - 当前会话里最大的体量。
+ * @returns 不小于它的档位值。
+ */
+function quantizeMax(maxWeight: number): number {
+  if (maxWeight <= 1) return 1
+  return Math.pow(1.25, Math.ceil(Math.log(maxWeight) / Math.log(1.25)))
+}
+
+/**
  * 把权重映射成杠长：开方压缩，长回答不至于把短回答挤成一个点。
  * @param weight - 该轮的字符体量。
- * @param maxWeight - 当前会话里最大的体量。
+ * @param maxWeight - 当前会话里最大的体量（已量化）。
  * @returns 像素宽度。
  */
 function barWidth(weight: number, maxWeight: number): number {
@@ -229,6 +244,8 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
 
   let turns: readonly RailTurn[] = []
   let hits: HTMLElement[] = []
+  /** seq → 那根杠的按钮节点，跨重画复用（见 draw 的注释）。 */
+  const nodes = new Map<number, HTMLElement>()
   let scrollport: HTMLElement | null = null
   let activeSeq: number | null = null
   let drawHandle: ReturnType<typeof setTimeout> | null = null
@@ -277,24 +294,68 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     }
   }
 
-  /** 重建杠，然后重新摆位。 */
+  /**
+   * 造一根空杠。
+   * @returns 尚未填数据的按钮节点。
+   */
+  function createHit(): HTMLElement {
+    const hit = doc.createElement('button')
+    hit.type = 'button'
+    hit.className = 'dsh-rail-hit'
+    const line = doc.createElement('div')
+    line.className = 'dsh-rail-bar'
+    hit.append(line)
+    return hit
+  }
+
+  /**
+   * 按 seq 复用节点重画轨道。
+   *
+   * **不能整条重建。** 流式输出时最后一轮每来一个 chunk 就重画一次，
+   * 全删重建会让指针底下那根杠在 mousedown 和 mouseup 之间被换掉——
+   * click 事件按规范只在两次事件落在同一元素时才触发，于是「点了没反应」；
+   * hover 态、原生 tooltip、翻页中的 loading 标记也会跟着一起丢。
+   * 所以这里按 seq 认节点，只改真正变了的属性。
+   */
   function draw(): void {
     if (disposed) return
-    const maxWeight = turns.reduce((max, turn) => Math.max(max, turn.weight), 0)
-    track.replaceChildren()
-    hits = turns.map((turn, index) => {
-      const hit = doc.createElement('button')
-      hit.type = 'button'
-      hit.className = 'dsh-rail-hit'
+    const maxWeight = quantizeMax(turns.reduce((max, turn) => Math.max(max, turn.weight), 0))
+    const next: HTMLElement[] = []
+    const used = new Set<number>()
+
+    turns.forEach((turn, index) => {
+      // 同一个 seq 在一次重画里只认一次；真出现重复就给个不进缓存的临时节点。
+      const reusable = used.has(turn.seq) ? undefined : nodes.get(turn.seq)
+      const hit = reusable ?? createHit()
+      if (reusable === undefined && !used.has(turn.seq)) nodes.set(turn.seq, hit)
+      used.add(turn.seq)
+
       hit.dataset.railIndex = String(index)
-      hit.title = turn.question
-      const line = doc.createElement('div')
-      line.className = 'dsh-rail-bar'
-      line.style.width = barWidth(turn.weight, maxWeight) + 'px'
-      hit.append(line)
-      track.append(hit)
-      return hit
+      hit.dataset.seq = String(turn.seq)
+      if (hit.title !== turn.question) hit.title = turn.question
+      const line = hit.firstElementChild
+      const width = barWidth(turn.weight, maxWeight) + 'px'
+      if (line instanceof HTMLElement && line.style.width !== width) line.style.width = width
+      next.push(hit)
     })
+
+    for (const [seq, node] of nodes) {
+      if (used.has(seq)) continue
+      node.remove()
+      nodes.delete(seq)
+    }
+
+    // 顺序对齐：只有位置真的变了才动 DOM，没变的节点连 insertBefore 都不调。
+    let cursor = track.firstElementChild
+    for (const node of next) {
+      if (cursor === node) {
+        cursor = cursor.nextElementSibling
+        continue
+      }
+      track.insertBefore(node, cursor)
+    }
+
+    hits = next
     place()
     paintActive()
   }
@@ -338,11 +399,18 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     place()
   }
 
+  /**
+   * 在当前轮次里按 seq 找一轮。
+   * @param seq - 事件 seq。
+   * @returns 命中的轮次；重画之间下标会移位，seq 不会。
+   */
+  function turnOf(seq: number): RailTurn | undefined {
+    for (const turn of turns) if (turn.seq === seq) return turn
+    return undefined
+  }
+
   /** 悬停：把这一轮的提问与回答填进卡片，并贴着这根杠竖直对齐。 */
-  function openCard(index: number): void {
-    const turn = turns[index]
-    const hit = hits[index]
-    if (turn === undefined || hit === undefined) return
+  function openCard(turn: RailTurn, hit: HTMLElement): void {
     question.textContent = turn.question.length > 0 ? turn.question : '（提问已不在加载窗口内）'
     answer.textContent = turn.answer
     card.dataset.open = '1'
@@ -365,8 +433,8 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     const target = event.target
     const hit = target instanceof Element ? target.closest('.dsh-rail-hit') : null
     if (!(hit instanceof HTMLElement)) return
-    const index = Number(hit.dataset.railIndex)
-    if (Number.isInteger(index)) openCard(index)
+    const turn = turnOf(Number(hit.dataset.seq))
+    if (turn !== undefined) openCard(turn, hit)
   })
 
   track.addEventListener('mouseleave', closeCard)
@@ -396,7 +464,7 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     const target = event.target
     const hit = target instanceof Element ? target.closest('.dsh-rail-hit') : null
     if (!(hit instanceof HTMLElement)) return
-    const turn = turns[Number(hit.dataset.railIndex)]
+    const turn = turnOf(Number(hit.dataset.seq))
     if (turn === undefined) return
 
     if (turn.key !== null) {

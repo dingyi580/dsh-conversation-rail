@@ -1,6 +1,6 @@
 {
   "name": "dsh-conversation-rail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Session minimap for DSH Web: one bar per turn along the left edge of the conversation, hover for a question/answer preview, click to jump. · 会话小地图：一根杠一轮对话，悬停出提问+回答预览，点击跳转。",
   "type": "module",
   "main": "./lib/index.js",
