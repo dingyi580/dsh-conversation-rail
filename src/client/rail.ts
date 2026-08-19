@@ -38,6 +38,16 @@ const BAR_MAX_WIDTH = 34
 const RAIL_INSET = 10
 /** 布局巡检间隔：兜住皮肤动画、侧栏折叠这类不发事件的尺寸变化。 */
 const SYNC_INTERVAL_MS = 250
+
+/** 淡入淡出时长，与 CSS 里的 transition 同一个值。 */
+const FADE_MS = 160
+
+/**
+ * 滚动区矩形稳定多久才算「布局定下来了」。
+ * 侧栏展开/收起是一段动画，期间对话区的位置和宽度一直在变——轨道跟着挪会
+ * 抖，直接按零尺寸判隐藏又会硬切。稳定这么久没变，才淡入。
+ */
+const SETTLE_MS = 220
 /**
  * 重画与高亮的合并窗口。用定时器而不是 requestAnimationFrame：
  * 标签页隐藏时 rAF 完全不触发，会话在后台读完再切回来就是一条空轨道。
@@ -52,10 +62,11 @@ const CSS = `
   position: fixed;
   z-index: 60;
   pointer-events: none;
-  display: none;
+  opacity: 0;
+  transition: opacity ${FADE_MS}ms ease;
   font-family: var(--dsw-font-family, inherit);
 }
-[${HOST_ATTR}][data-visible='1'] { display: block; }
+[${HOST_ATTR}][data-visible='1'] { opacity: 1; }
 
 [${HOST_ATTR}] .dsh-rail-track {
   position: absolute;
@@ -64,8 +75,8 @@ const CSS = `
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  pointer-events: auto;
 }
+[${HOST_ATTR}][data-visible='1'] .dsh-rail-track { pointer-events: auto; }
 
 [${HOST_ATTR}] .dsh-rail-hit {
   display: flex;
@@ -251,6 +262,17 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
   let drawHandle: ReturnType<typeof setTimeout> | null = null
   let activeHandle: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  /** 上一次量到的滚动区矩形，用来判断布局是不是还在动。 */
+  let rectKey = ''
+  /** 矩形最后一次变化的时刻。 */
+  let settledAt = 0
+  let settleHandle: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * 滚动区尺寸变化的即时通知。250ms 的轮询发现侧栏在动已经晚了——那时轨道
+   * 已经在错位的地方显示了一帧。
+   */
+  const sizeWatch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => place())
 
   /** 当前生效的滚动容器；换会话或换布局时自动改挂滚动监听。 */
   function resolveScrollport(): HTMLElement | null {
@@ -258,8 +280,10 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     const next = found instanceof HTMLElement ? found : null
     if (next === scrollport) return scrollport
     scrollport?.removeEventListener('scroll', onScroll)
+    if (scrollport !== null) sizeWatch?.unobserve(scrollport)
     scrollport = next
     scrollport?.addEventListener('scroll', onScroll, { passive: true })
+    if (scrollport !== null) sizeWatch?.observe(scrollport)
     return scrollport
   }
 
@@ -275,7 +299,24 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
       host.dataset.visible = '0'
       return
     }
-    host.dataset.visible = '1'
+    // 布局还在动（侧栏展开/收起）就先淡出：位置照常更新，稳定下来再淡入。
+    const key = [rect.left, rect.top, rect.width, rect.height].map(Math.round).join(',')
+    const now = performance.now()
+    if (key !== rectKey) {
+      rectKey = key
+      settledAt = now
+      host.dataset.visible = '0'
+    } else {
+      host.dataset.visible = now - settledAt >= SETTLE_MS ? '1' : '0'
+    }
+    // 还没稳就安排一次复查，否则要等下一个 250ms 轮询才淡入。
+    if (host.dataset.visible === '0' && settleHandle === null) {
+      settleHandle = setTimeout(() => {
+        settleHandle = null
+        place()
+      }, SETTLE_MS + 20)
+    }
+
     host.style.left = Math.round(rect.left + RAIL_INSET) + 'px'
     host.style.top = Math.round(rect.top) + 'px'
     host.style.height = Math.round(rect.height) + 'px'
@@ -516,6 +557,8 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
       scrollport?.removeEventListener('scroll', onScroll)
       if (drawHandle !== null) clearTimeout(drawHandle)
       if (activeHandle !== null) clearTimeout(activeHandle)
+      if (settleHandle !== null) clearTimeout(settleHandle)
+      sizeWatch?.disconnect()
       host.remove()
     },
   }
