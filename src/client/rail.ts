@@ -39,8 +39,11 @@ const RAIL_INSET = 10
 /** 布局巡检间隔：兜住皮肤动画、侧栏折叠这类不发事件的尺寸变化。 */
 const SYNC_INTERVAL_MS = 250
 
-/** 淡入淡出时长，与 CSS 里的 transition 同一个值。 */
-const FADE_MS = 160
+/** 淡出时长：布局一动就要让开，快一点。 */
+const FADE_OUT_MS = 120
+
+/** 淡入时长：等布局定下来再慢慢回来，别显得突兀。 */
+const FADE_IN_MS = 260
 
 /**
  * 滚动区矩形稳定多久才算「布局定下来了」。
@@ -63,10 +66,10 @@ const CSS = `
   z-index: 60;
   pointer-events: none;
   opacity: 0;
-  transition: opacity ${FADE_MS}ms ease;
+  transition: opacity ${FADE_OUT_MS}ms ease;
   font-family: var(--dsw-font-family, inherit);
 }
-[${HOST_ATTR}][data-visible='1'] { opacity: 1; }
+[${HOST_ATTR}][data-visible='1'] { opacity: 1; transition: opacity ${FADE_IN_MS}ms ease; }
 
 [${HOST_ATTR}] .dsh-rail-track {
   position: absolute;
@@ -287,6 +290,15 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     return scrollport
   }
 
+  /** 安排一次「布局是不是稳了」的复查，不重复排队。 */
+  function scheduleSettle(): void {
+    if (settleHandle !== null || disposed) return
+    settleHandle = setTimeout(() => {
+      settleHandle = null
+      place()
+    }, SETTLE_MS + 20)
+  }
+
   /** 把浮层摆到滚动区左缘，并按可用高度决定是否显示。 */
   function place(): void {
     const port = resolveScrollport()
@@ -296,7 +308,13 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     }
     const rect = port.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) {
+      // 零尺寸也是「布局正在动」的一种，必须记进稳定判定里。
+      // 否则回来时几何若与零尺寸之前那次相同，key 没变、settledAt 还是老的，
+      // 就会被判成「早就稳了」而立刻露面——淡出才走了几十毫秒，看着就是硬跳。
       host.dataset.visible = '0'
+      rectKey = ''
+      settledAt = performance.now()
+      scheduleSettle()
       return
     }
     // 布局还在动（侧栏展开/收起）就先淡出：位置照常更新，稳定下来再淡入。
@@ -310,12 +328,7 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
       host.dataset.visible = now - settledAt >= SETTLE_MS ? '1' : '0'
     }
     // 还没稳就安排一次复查，否则要等下一个 250ms 轮询才淡入。
-    if (host.dataset.visible === '0' && settleHandle === null) {
-      settleHandle = setTimeout(() => {
-        settleHandle = null
-        place()
-      }, SETTLE_MS + 20)
-    }
+    if (host.dataset.visible === '0') scheduleSettle()
 
     host.style.left = Math.round(rect.left + RAIL_INSET) + 'px'
     host.style.top = Math.round(rect.top) + 'px'
