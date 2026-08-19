@@ -380,6 +380,21 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     paintActive()
   }
 
+  /**
+   * 直接指定当前高亮的那一轮。
+   *
+   * `measureActive` 只由滚动事件驱动，而且扫不到行时会保留旧值——跳转瞬间
+   * 行正在重渲染，扫不到，于是高亮停在跳之前那根上，且跳完没有新的滚动来纠正。
+   * 点击是明确的意图，直接落。
+   *
+   * @param seq - 目标轮次的事件 seq。
+   */
+  function setActive(seq: number): void {
+    if (activeSeq === seq) return
+    activeSeq = seq
+    paintActive()
+  }
+
   /** 把 activeSeq 落到 DOM 上。 */
   function paintActive(): void {
     turns.forEach((turn, index) => {
@@ -466,6 +481,8 @@ export function mountRail(doc: Document, deps: RailDeps): RailHandle {
     if (!(hit instanceof HTMLElement)) return
     const turn = turnOf(Number(hit.dataset.seq))
     if (turn === undefined) return
+
+    setActive(turn.seq)
 
     if (turn.key !== null) {
       scrollToKey(turn.key)
